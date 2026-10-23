@@ -1,0 +1,6 @@
+{
+  "name": "TableWatch — Restaurant Operations Dashboard",
+  "description": "Real-time restaurant table monitoring, automated waiter delay and cleaning alerts, queue wait-time estimation, multi-camera CCTV supervision, and operational analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

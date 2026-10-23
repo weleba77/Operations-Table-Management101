@@ -1,0 +1,283 @@
+// Prisma schema for TableWatch
+// Database provider: PostgreSQL (supported in production) or SQLite (in-development demo)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STAFF
+  MANAGER
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  WAITING_FOR_WAITER
+  WAITING_FOR_CLEANING
+  CLEANING
+  RESERVED
+}
+
+enum AlertSeverity {
+  CRITICAL
+  WARNING
+  INFO
+}
+
+enum AlertType {
+  WAITER_DELAY
+  CLEANING_DELAY
+  LONG_OCCUPANCY
+  CAMERA_DISCONNECTED
+  QUEUE_CONGESTION
+}
+
+enum AlertStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum QueueStatus {
+  WAITING
+  SEATED
+  CANCELLED
+  NO_SHOW
+}
+
+enum CameraStatus {
+  CONNECTED
+  RECONNECTING
+  DISCONNECTED
+}
+
+enum StaffStatus {
+  ON_DUTY
+  ON_BREAK
+  OFF_DUTY
+}
+
+model Restaurant {
+  id              String             @id @default(uuid())
+  name            String
+  openingHours    String             @default("11:00 - 23:00")
+  zones           DiningZone[]
+  settings        RestaurantSettings?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model RestaurantSettings {
+  id                            String     @id @default(uuid())
+  restaurantId                  String     @unique
+  restaurant                    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  waiterAlertThresholdMinutes   Int        @default(5)
+  cleaningAlertThresholdMinutes Int        @default(10)
+  targetTablesPerWaiter         Int        @default(4)
+  defaultDiningDurationMinutes  Int        @default(65)
+  defaultCleaningDurationMinutes Int       @default(8)
+  maxAcceptableWaitMinutes      Int        @default(45)
+  simulationEnabled             Boolean    @default(true)
+  simulationSpeed               Int        @default(1)
+  createdAt                     DateTime   @default(now())
+  updatedAt                     DateTime   @updatedAt
+}
+
+model User {
+  id             String           @id @default(uuid())
+  name           String
+  email          String           @unique
+  passwordHash   String
+  role           UserRole         @default(STAFF)
+  avatarUrl      String?
+  phone          String?
+  assignedTables Table[]          @relation("WaiterAssignedTables")
+  eventsLogged   TableEvent[]
+  sessionsServed DiningSession[]  @relation("WaiterDiningSessions")
+  notificationPref NotificationPreference?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model NotificationPreference {
+  id                      String   @id @default(uuid())
+  userId                  String   @unique
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  soundEnabled            Boolean  @default(true)
+  browserPushEnabled      Boolean  @default(false)
+  notifyOnCriticalAlerts  Boolean  @default(true)
+  notifyOnCleaningNeeded  Boolean  @default(true)
+  updatedAt               DateTime @updatedAt
+}
+
+model DiningZone {
+  id           String      @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  color        String      @default("#059669")
+  displayOrder Int         @default(1)
+  tables       Table[]
+  cameras      Camera[]
+  createdAt    DateTime    @default(now())
+}
+
+model Table {
+  id                 String             @id @default(uuid())
+  tableNumber        Int                @unique
+  capacity           Int                @default(4)
+  zoneId             String
+  zone               DiningZone         @relation(fields: [zoneId], references: [id])
+  status             TableStatus        @default(AVAILABLE)
+  currentSessionId   String?
+  assignedWaiterId   String?
+  assignedWaiter     User?              @relation("WaiterAssignedTables", fields: [assignedWaiterId], references: [id])
+  seatedAt           DateTime?
+  serviceStartedAt   DateTime?
+  cleaningStartedAt  DateTime?
+  reservedFor        String?
+  reservedTime       DateTime?
+  posX               Float?
+  posY               Float?
+  sessions           DiningSession[]
+  events             TableEvent[]
+  alerts             Alert[]
+  cameraMappings     CameraTableMapping[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([status])
+  @@index([zoneId])
+}
+
+model DiningSession {
+  id                   String        @id @default(uuid())
+  tableId              String
+  table                Table         @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  tableNumber          Int
+  partySize            Int           @default(2)
+  customerName         String?
+  seatedAt             DateTime      @default(now())
+  firstServiceAt       DateTime?
+  diningCompletedAt    DateTime?
+  cleaningStartedAt    DateTime?
+  cleaningCompletedAt  DateTime?
+  assignedWaiterId     String?
+  assignedWaiter       User?         @relation("WaiterDiningSessions", fields: [assignedWaiterId], references: [id])
+  status               String        @default("ACTIVE") // ACTIVE, COMPLETED
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  @@index([tableId])
+  @@index([seatedAt])
+  @@index([status])
+}
+
+model TableEvent {
+  id          String   @id @default(uuid())
+  tableId     String
+  table       Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  tableNumber Int
+  eventType   String
+  details     String
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  timestamp   DateTime @default(now())
+
+  @@index([tableId])
+  @@index([timestamp])
+}
+
+model WaiterAssignment {
+  id         String   @id @default(uuid())
+  waiterId   String
+  tableId    String
+  assignedAt DateTime @default(now())
+  releasedAt DateTime?
+
+  @@index([waiterId])
+  @@index([tableId])
+}
+
+model Alert {
+  id             String        @id @default(uuid())
+  tableId        String?
+  table          Table?        @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  tableNumber    Int?
+  zoneName       String?
+  type           AlertType
+  severity       AlertSeverity @default(WARNING)
+  message        String
+  status         AlertStatus   @default(ACTIVE)
+  createdAt      DateTime      @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  acknowledgedBy String?
+
+  @@index([status])
+  @@index([tableId])
+}
+
+model QueueEntry {
+  id                   String      @id @default(uuid())
+  queueNumber          Int
+  customerName         String
+  partySize            Int         @default(2)
+  phone                String
+  seatingPreference    String      @default("ANY")
+  joinTime             DateTime    @default(now())
+  estimatedWaitMinutes Int         @default(15)
+  confidence           String      @default("MEDIUM")
+  status               QueueStatus @default(WAITING)
+  recommendedTableId   String?
+  notes                String?
+  seatedAt             DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([status])
+  @@index([joinTime])
+}
+
+model Camera {
+  id             String               @id @default(uuid())
+  name           String
+  location       String
+  zoneId         String
+  zone           DiningZone           @relation(fields: [zoneId], references: [id])
+  rtspUrlStub    String
+  status         CameraStatus         @default(CONNECTED)
+  lastPingAt     DateTime             @default(now())
+  resolution     String               @default("1080p")
+  framerate      Int                  @default(30)
+  tableMappings  CameraTableMapping[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+}
+
+model CameraTableMapping {
+  id        String   @id @default(uuid())
+  cameraId  String
+  camera    Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  tableId   String
+  table     Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([cameraId, tableId])
+}
+
+model StaffingSlot {
+  id              String   @id @default(uuid())
+  timeSlot        String   // e.g. "12:00-14:00"
+  forecastDemand  String   // "High", "Medium", "Low"
+  suggestedWaiters Int
+  activeWaiters    Int
+  dayOfWeek       Int      // 0-6
+}
