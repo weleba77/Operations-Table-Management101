@@ -48,22 +48,58 @@ export const TableActionModal: React.FC<TableActionModalProps> = ({
   const [customerName, setCustomerName] = useState<string>(table.customerName || '');
   const [selectedWaiter, setSelectedWaiter] = useState<string>(table.assignedWaiterId || '');
   const [loading, setLoading] = useState(false);
-  const [elapsedMinutes, setElapsedMinutes] = useState<number>(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
-  // Update live elapsed minutes
+  // Real-time duration timer for OCCUPIED (and WAITING_FOR_WAITER) or CLEANING
   useEffect(() => {
-    const calcElapsed = () => {
-      if (table.seatedAt) {
-        const diff = Math.floor((Date.now() - new Date(table.seatedAt).getTime()) / 60000);
-        setElapsedMinutes(Math.max(0, diff));
+    const isOccupied = table.status === 'OCCUPIED' || table.status === 'WAITING_FOR_WAITER';
+    const isCleaning = table.status === 'CLEANING';
+
+    if (!isOccupied && !isCleaning) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const getStartTime = () => {
+      if (isOccupied && table.seatedAt) {
+        return new Date(table.seatedAt).getTime();
+      }
+      if (isCleaning) {
+        if (table.cleaningStartedAt) {
+          return new Date(table.cleaningStartedAt).getTime();
+        }
+        // Fallback to 1 minute ago if timestamp was absent
+        return Date.now() - 60000;
+      }
+      return null;
+    };
+
+    const updateTimer = () => {
+      const start = getStartTime();
+      if (start) {
+        const diffSecs = Math.max(0, Math.floor((Date.now() - start) / 1000));
+        setElapsedSeconds(diffSecs);
       } else {
-        setElapsedMinutes(0);
+        setElapsedSeconds(0);
       }
     };
-    calcElapsed();
-    const timer = setInterval(calcElapsed, 10000);
+
+    updateTimer();
+    const timer = setInterval(updateTimer, 1000);
     return () => clearInterval(timer);
-  }, [table.seatedAt]);
+  }, [table.status, table.seatedAt, table.cleaningStartedAt]);
+
+  const formatRealtimeDuration = (totalSeconds: number) => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+
+    if (hours > 0) {
+      return `${hours}h ${pad(minutes)}m ${pad(seconds)}s`;
+    }
+    return `${pad(minutes)}m ${pad(seconds)}s`;
+  };
 
   const handleSeat = async () => {
     setLoading(true);
@@ -192,24 +228,40 @@ export const TableActionModal: React.FC<TableActionModalProps> = ({
         {/* Modal Body */}
         <div className="p-6 space-y-5 text-xs">
           {/* Status Bar */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+          <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-200">
             <div>
               <div className="text-slate-500 text-[11px] font-medium">Current Status</div>
               <div className="mt-0.5">
                 <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-md font-semibold text-xs ${currentStatusMeta.bg} ${currentStatusMeta.text}`}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold text-xs ${currentStatusMeta.bg} ${currentStatusMeta.text}`}
                 >
-                  {currentStatusMeta.label}
+                  <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80 animate-pulse"></span>
+                  <span>{currentStatusMeta.label}</span>
                 </span>
               </div>
             </div>
 
-            {table.seatedAt && (
+            {(table.status === 'OCCUPIED' ||
+              table.status === 'WAITING_FOR_WAITER' ||
+              table.status === 'CLEANING') && (
               <div className="text-right">
-                <div className="text-slate-500 text-[11px] font-medium">Seated Duration</div>
-                <div className="font-mono tabular-nums font-bold text-slate-900 text-sm flex items-center justify-end gap-1 mt-0.5">
+                <div className="text-slate-500 text-[11px] font-medium flex items-center justify-end gap-1">
                   <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{elapsedMinutes}m</span>
+                  <span>
+                    {table.status === 'CLEANING' ? 'Cleaning Duration' : 'Occupancy Duration'}
+                  </span>
+                </div>
+                <div
+                  className={`font-mono tabular-nums font-bold text-sm tracking-tight mt-0.5 flex items-center justify-end gap-1.5 ${
+                    table.status === 'CLEANING'
+                      ? 'text-blue-700'
+                      : table.status === 'WAITING_FOR_WAITER'
+                      ? 'text-rose-600'
+                      : 'text-slate-900'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping opacity-75"></span>
+                  <span>{formatRealtimeDuration(elapsedSeconds)}</span>
                 </div>
               </div>
             )}
@@ -316,6 +368,13 @@ export const TableActionModal: React.FC<TableActionModalProps> = ({
                     )}
                   </span>
                 </div>
+                <div className="flex justify-between items-center pt-1 border-t border-slate-200/60">
+                  <span className="text-slate-500">Live Status Duration</span>
+                  <span className="font-mono tabular-nums font-bold text-slate-900 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>{formatRealtimeDuration(elapsedSeconds)}</span>
+                  </span>
+                </div>
               </div>
 
               {/* Waiter assigner selector */}
@@ -399,8 +458,20 @@ export const TableActionModal: React.FC<TableActionModalProps> = ({
 
           {table.status === 'CLEANING' && (
             <div className="space-y-4">
-              <div className="p-4 bg-blue-50 rounded-xl border border-blue-200 text-blue-900 text-xs">
-                Sanitation and tableware reset in progress by floor busser.
+              <div className="p-4 bg-blue-50 rounded-xl border border-blue-200 text-blue-900 text-xs space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    <span className="font-bold text-blue-950">Active Sanitation in Progress</span>
+                  </div>
+                  <div className="font-mono tabular-nums font-bold text-blue-800 bg-blue-100/90 px-2.5 py-0.5 rounded-md border border-blue-200 text-xs flex items-center gap-1.5 shadow-2xs">
+                    <Clock className="w-3.5 h-3.5 text-blue-600" />
+                    <span>{formatRealtimeDuration(elapsedSeconds)}</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-blue-800/90 leading-relaxed">
+                  Sanitation and tableware reset in progress by floor busser. This timer tracks how long the cleaning cycle has persisted.
+                </p>
               </div>
               <button
                 onClick={handleMarkCleaned}
